@@ -1,39 +1,46 @@
 import requests
-from bs4 import BeautifulSoup
 import boto3
 import uuid
+from datetime import datetime
 
 def lambda_handler(event, context):
-    # URL de la página web que contiene la tabla
-    url = "https://ultimosismo.igp.gob.pe/productos/reportes-sismicos/"
+    # URL de la API que usa la página de sismos del IGP (sismos del año actual)
+    anio = datetime.now().year
+    url = f"https://ultimosismo.igp.gob.pe/api/ultimo-sismo/ajaxb/{anio}"
 
-    # Realizar la solicitud HTTP a la página web
-    response = requests.get(url)
+    # Realizar la solicitud HTTP a la API
+    response = requests.get(url, timeout=10)
     if response.status_code != 200:
         return {
             'statusCode': response.status_code,
-            'body': 'Error al acceder a la página web'
+            'body': 'Error al acceder a la API del IGP'
         }
 
-    # Parsear el contenido HTML de la página web
-    soup = BeautifulSoup(response.content, 'html.parser')
-
-    # Encontrar la tabla en el HTML
-    table = soup.find('table')
-    if not table:
+    # Leer el JSON con la lista de sismos
+    sismos = response.json()
+    if not sismos:
         return {
             'statusCode': 404,
-            'body': 'No se encontró la tabla en la página web'
+            'body': 'No se encontraron sismos en la API del IGP'
         }
 
-    # Extraer los encabezados de la tabla
-    headers = [header.text for header in table.find_all('th')]
+    # Quedarnos con los 10 sismos más recientes
+    sismos = sorted(sismos, key=lambda s: s['idlistasismos'], reverse=True)[:10]
 
-    # Extraer las filas de la tabla
+    # Armar las filas con los datos que nos interesan
     rows = []
-    for row in table.find_all('tr')[1:]:  # Omitir el encabezado
-        cells = row.find_all('td')
-        rows.append({headers[i+1]: cell.text for i, cell in enumerate(cells)})
+    for s in sismos:
+        rows.append({
+            'codigo': s['codigo'],
+            'referencia': s['referencia'],
+            'fecha_local': s['fecha_local'][:10],
+            'hora_local': s['hora_local'][11:19],
+            'magnitud': s['magnitud'],
+            'profundidad': s['profundidad'],
+            'latitud': s['latitud'],
+            'longitud': s['longitud'],
+            'intensidad': s['intensidad']
+        })
 
     # Guardar los datos en DynamoDB
     dynamodb = boto3.resource('dynamodb')
